@@ -106,8 +106,12 @@ var
   s: string;
 begin
   result := '';
-  s := '../gcc/dev/' + lowercase(deviceName);
+  s := '../gcc/dev/';
+  if not DirectoryExists(s) then // possibly work from nested subdirectory, so move up hierarchy
+    s := '../'+s;
+  s := s + lowercase(deviceName);
   s := IncludeTrailingPathDelimiter(ExpandFileName(s)) + '*';
+
   if FindFirst(s, faAnyFile or faDirectory, sr) = 0 then
   repeat
     s := ExtractFileName(sr.Name);
@@ -130,11 +134,12 @@ begin
   s3 := '0,0';
   for i := 0 to High(dev.AddressSpaces) do
   begin
-    if dev.AddressSpaces[i].id = 'prog' then
+    if CompareText(dev.AddressSpaces[i].id, 'prog') = 0 then
     begin
       for j := 0 to High(dev.AddressSpaces[i].memorySegments) do
       begin
-        if dev.AddressSpaces[i].memorySegments[j].aname = 'FLASH' then
+        if (CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'FLASH') = 0) or
+           (CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'PROGMEM') = 0) then
         begin
           s1 := IntToStr(dev.AddressSpaces[i].memorySegments[j].start) + ',' +
                 IntToStr(dev.AddressSpaces[i].memorySegments[j].size);
@@ -142,19 +147,25 @@ begin
         end;
       end;
     end
-    else if dev.AddressSpaces[i].id = 'data' then
+    else if CompareText(dev.AddressSpaces[i].id, 'data') = 0 then
     begin
       for j := 0 to High(dev.AddressSpaces[i].memorySegments) do
       begin
-        if dev.AddressSpaces[i].memorySegments[j].aname = 'IRAM' then
+        if (dev.AddressSpaces[i].memorySegments[j].aname = 'IRAM') or
+           (dev.AddressSpaces[i].memorySegments[j].aname = 'INTERNAL_SRAM') then
         begin
           s2 := IntToStr(dev.AddressSpaces[i].memorySegments[j].start) + ',' +
                 IntToStr(dev.AddressSpaces[i].memorySegments[j].size);
           Break;
+        end
+        else if CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'EEPROM') = 0 then
+        begin
+          s3 := IntToStr(dev.AddressSpaces[i].memorySegments[j].start) + ',' +
+                IntToStr(dev.AddressSpaces[i].memorySegments[j].size);
         end;
       end;
     end
-    else if dev.AddressSpaces[i].id = 'eeprom' then
+    else if CompareText(dev.AddressSpaces[i].id, 'eeprom') = 0 then
       s3 := '0,' + IntToStr(dev.AddressSpaces[i].size);
   end;
   Result := dev.deviceName + ',' +
@@ -174,10 +185,10 @@ begin
   device := parseDevice(Doc.DocumentElement);
   FreeAndNil(Doc);
 
-  //if device.architechture = 'AVR8X' then
-    generateUnitXFromATDFInfo(device, SL);
-  //else
-  //  generateUnitFromATDFInfo(device, SL);
+  if device.architechture = 'AVR8X' then
+    generateUnitXFromATDFInfo(device, SL)
+  else
+    generateUnitFromATDFInfo(device, SL);
 
   if Assigned(ControllerInfo) then
   begin

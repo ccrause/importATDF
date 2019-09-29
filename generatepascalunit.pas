@@ -197,6 +197,46 @@ begin
   FreeAndNil(bitFieldList);
 end;
 
+procedure processBitField(constref bitField: TBitField; constref List: TStrings; const indentSpaces: byte);
+var
+  i, bitsInMask: integer;
+  idx, bmp, padding, s1, s2: string;
+begin
+  idx := 'idx';
+  bmp := 'bm';
+  SetLength(padding, indentSpaces);
+  FillChar(padding[1], indentSpaces, ' ');
+
+  // check if single bit value
+  if bitField.mask in [1, 2, 4, 8, 16, 32, 64, 128] then
+  begin
+    s1 := format(padding + '%s = $%.2x;',
+                  [bitField.aname + idx, round(log2(bitField.mask))]);
+    if bitField.caption = '' then
+      s2 := format('%s = $%.2x;',
+                    [bitField.aname + bmp, bitField.mask])
+    else
+      s2 := format('%s = $%.2x;  // %s',
+                    [bitField.aname + bmp, bitField.mask, bitField.caption]);
+    List.Add(s1 + '  ' + s2);
+  end
+  else // expand mask into several bit definitions
+  begin
+    bitsInMask := -1;     // identify lowest bit label
+    for i := 0 to 7 do
+      if ((1 shl i) and bitField.mask) > 0 then
+      begin
+        inc(bitsInMask);  // zero based
+        if bitField.caption = '' then
+          List.Add(format(padding + '%s = $%.2x;',
+            [bitField.aname + IntToStr(bitsInMask + bitField.lsb) + idx, i]))
+        else
+          List.Add(format(padding + '%s = $%.2x;  // %s',
+            [bitField.aname + IntToStr(bitsInMask + bitField.lsb) + idx, i, bitField.caption]));
+      end;
+  end;
+end;
+
 // Plain style var declaration per register
 // var
 //  PORTB: byte absolute $25;  // Port B Data Register
@@ -253,36 +293,8 @@ begin
       begin
         List.Add('const');
         previousVar := false;
-        for j := 0 to length(r.bitFields)-1 do
-        begin
-          // check if single bit value
-          if r.bitFields[j].mask in [1, 2, 4, 8, 16, 32, 64, 128] then
-          begin
-            b := r.bitFields[j];
-            if b.caption = '' then
-              List.Add(format('  %s = $%.2x;',
-                            [b.aname, round(log2(b.mask))]))
-            else
-              List.Add(format('  %s = $%.2x;  // %s',
-                            [b.aname, round(log2(b.mask)), b.caption]));
-          end
-          else // expand mask into several bit definitions
-          begin
-            bitsInMask := -1;     // identify lowest bit label
-            for k := 0 to 7 do
-              if ((1 shl k) and r.bitFields[j].mask) > 0 then
-              begin
-                inc(bitsInMask);  // zero based
-                if r.bitFields[j].caption = '' then
-                  List.Add(format('  %s = $%.2x;',
-                    [r.bitFields[j].aname + IntToStr(bitsInMask + r.bitFields[j].lsb), k]))
-                else
-                  List.Add(format('  %s = $%.2x;  // %s',
-                    [r.bitFields[j].aname + IntToStr(bitsInMask + r.bitFields[j].lsb), k, r.bitFields[j].caption]));
-              end;
-          end;
-        end;
-        List.Add('');
+        for j := 0 to high(r.bitFields) do
+          processBitField(r.bitFields[j], List, 2);
       end;
     end;
   end;
@@ -716,8 +728,8 @@ begin
     SL.Add('unit ' + device.deviceName + ';');
     SL.Add(#13#10'{$goto on}'#13#10'interface'#13#10);
 
-    //generateDeclarationsOpt1(device, SL);
-    generateDeclarationsOpt2(device, SL);
+    generateDeclarationsOpt1(device, SL);
+    //generateDeclarationsOpt2(device, SL);
 
     if pgmsize > 8192 then
       SL.Add(#13#10'implementation'#13#10#13#10'{$i avrcommon.inc}'#13#10)
@@ -871,26 +883,27 @@ end;
 // end;
 procedure generateDeclarationsOptX(constref device: TDevice; var List: TStrings);
 var
-  i, j, k, bitsInMask: integer;
+  i, j, k, bitsInMask, tmp2, tmp, tmp3: integer;
   sortedRegs: TSortedRegs;
   r: TRegister;
   b: TBitField;
-  previousVar, foundBottomReg: boolean;
+  previousType, foundBottomReg, isUniqueBitField: boolean;
   s, comment, type_: string;
   pm: TPeriphModule;
   m: TModule;
-  reverseList: TStringList;
+  reverseList, bitFieldList: TStringList;
   RegGroupArray: array of string;
 begin
   if not Assigned(device.Modules) then
-    exit
-  else
-    List.Add('type');
+    exit;
+  previousType := false;
 
+  // Experimental, doesn't really work satisfactory
   if device.architechture = 'AVR8' then
     convertToRegisterGroupFormat(device);
 
   reverseList := TStringList.Create;
+  bitFieldList := TStringList.Create;
   for i := 0 to High(device.Modules) do
   begin
     m := device.Modules[i];
@@ -899,14 +912,21 @@ begin
     type_ := ': T'+m.aname+';';
     for j := 0 to High(m.registerGroups) do
     begin
-      List.Add('  T' + m.registerGroups[j].aname + ' = record //'+m.registerGroups[j].caption);
+      if not previousType then
+      begin
+        List.Add('type');
+        previousType := true;
+      end;
 
       if m.registerGroups[j].class_ = '' then
       begin
+        // Declare normal record as object so that const declarations can be encapsulated inside object
+        List.Add('  T' + m.registerGroups[j].aname + ' = object //'+m.registerGroups[j].caption);
         SetLength(RegGroupArray, m.registerGroups[j].size);
         for k := 0 to high(RegGroupArray) do
           RegGroupArray[k] := '';
 
+        bitFieldList.Add('  const');
         for k := 0 to high(m.registerGroups[j].registers) do
         begin
           r := m.registerGroups[j].registers[k];
@@ -937,6 +957,34 @@ begin
             else
               List.Add('################ Error unexpected register byte size...');
           end;
+
+          if (length(r.bitFields) > 0) then
+          begin
+            // Loop over bit fields
+            // check if bit field name clashes with any other bit name from any previous register
+            for tmp := 0 to high(r.bitFields) do
+            begin
+              isUniqueBitField := true;
+
+              // loop over previous registers
+              for tmp2 := k-1 downto 0 do
+              begin
+                if length(m.registerGroups[j].registers[tmp2].bitFields) > 0 then
+                begin
+                  for tmp3 := 0 to high(m.registerGroups[j].registers[tmp2].bitFields) do
+                  begin
+                    isUniqueBitField := r.bitFields[tmp].aname <> m.registerGroups[j].registers[tmp2].bitFields[tmp3].aname;
+                    if not isUniqueBitField then
+                      break;
+                  end;
+                  if not isUniqueBitField then
+                    break;
+                end;
+              end;
+              if isUniqueBitField then
+                processBitField(r.bitFields[tmp], bitFieldList, 4);
+            end;
+          end;
         end;
 
         // Scan from bottom up, only add registers after first real register from bottom
@@ -960,17 +1008,22 @@ begin
           List.Add(reverseList[k]);
 
         reverseList.Clear;
+        if bitFieldList.Count > 1 then // list always starts with 'const' as first item
+          List.AddStrings(bitFieldList);
+
         List.Add('  end;');
         List.Add('');
+        bitFieldList.Clear;
       end  // if
       else if m.registerGroups[j].class_ = 'union' then
       begin
+        // Need to declare variant parts as record, so no const declarations included
+        List.Add('  T' + m.registerGroups[j].aname + ' = record //'+m.registerGroups[j].caption);
         List.Add('    case byte of');
         for k := 0 to high(m.registerGroups[j].registers) do
-          List.Add(format('    %d: (%s: T%s);', [k, m.registerGroups[j].registers[k].aname, m.registerGroups[j].registers[k].caption]));
+          List.Add(format('      %d: (%s: T%s);', [k, m.registerGroups[j].registers[k].aname, m.registerGroups[j].registers[k].caption]));
 
         List.Add('    end;');
-        //List.Add('  end;');
         List.Add('');
       end
       else
@@ -978,6 +1031,14 @@ begin
     end;
   end;
   reverseList.Free;
+  bitFieldList.Free;
+
+  // Add generic pin definitions
+  List.Add('');
+  List.Add('const');
+  for i := 0 to 7 do
+    List.Add(format(' Pin%didx = %d;  Pin%dbm = %d;', [i, i, i, 1 shl i]));
+  List.Add('');
 
   sortedRegGroupsX(device, List);
 end;
