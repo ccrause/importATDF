@@ -65,13 +65,15 @@ end;
 procedure TForm1.ParseMenuItemClick(Sender: TObject);
 var
   info: TSearchRec;
-  sourcepath, destpath, s: string;
+  sourcepath, destpath, s, mculist: string;
   SL: TStringList;
 begin
   if OpenDialog1.Execute then
   begin
     SL := TStringList.Create;
     ControllerInfo := TStringList.Create;
+    ControllerInfo.Add('DeviceName,Architecture,Family,DeviceType,Flash start,Flash size,SRAM start,SRAM size,EEPROM start,EEPROM size');
+    mculist := 'CPU_UNITS=';
 
     sourcepath := IncludeTrailingPathDelimiter(ExtractFileDir(OpenDialog1.FileName));
     SetCurrentDir(sourcepath);
@@ -88,6 +90,7 @@ begin
       Self.Caption := s;
       Application.ProcessMessages;
       s := LowerCase(s);
+      mculist := mculist + s + ' ';
       SL.Clear;
       SL.SaveToFile(destpath + s + '.pp');
       ParseFile(sourcepath + info.Name, SL);
@@ -95,6 +98,7 @@ begin
     until FindNext(info) <> 0;
     FindClose(info);
     SL.Free;
+    ControllerInfo.Add(mculist);
     ControllerInfo.SaveToFile(destpath + 'cpuinfo.pas');
     FreeAndNil(ControllerInfo);
   end;
