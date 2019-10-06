@@ -197,12 +197,12 @@ begin
   FreeAndNil(bitFieldList);
 end;
 
-procedure processBitField(constref bitField: TBitField; constref List: TStrings; const indentSpaces: byte);
+procedure processBitField(constref bitField: TBitField; constref List: TStrings; const indentSpaces: byte; const maskOnly: boolean = false);
 var
   i, bitsInMask: integer;
   idx, bmp, padding, s1, s2: string;
 begin
-  idx := 'idx';
+  idx := 'bp';
   bmp := 'bm';
   SetLength(padding, indentSpaces);
   FillChar(padding[1], indentSpaces, ' ');
@@ -210,17 +210,25 @@ begin
   // check if single bit value
   if bitField.mask in [1, 2, 4, 8, 16, 32, 64, 128] then
   begin
-    s1 := format(padding + '%s = $%.2x;',
+    if not maskOnly then
+    begin
+      s1 := format('%s = $%.2x;',
                   [bitField.aname + idx, round(log2(bitField.mask))]);
+    end;
+
     if bitField.caption = '' then
       s2 := format('%s = $%.2x;',
                     [bitField.aname + bmp, bitField.mask])
     else
       s2 := format('%s = $%.2x;  // %s',
                     [bitField.aname + bmp, bitField.mask, bitField.caption]);
-    List.Add(s1 + '  ' + s2);
+
+    if maskOnly then
+      List.Add(padding + s2)
+    else
+      List.Add(padding + s1 + '  ' + s2);
   end
-  else // expand mask into several bit definitions
+  else if not maskOnly then// expand mask into several bit definitions
   begin
     bitsInMask := -1;     // identify lowest bit label
     for i := 0 to 7 do
@@ -234,6 +242,123 @@ begin
           List.Add(format(padding + '%s = $%.2x;  // %s',
             [bitField.aname + IntToStr(bitsInMask + bitField.lsb) + idx, i, bitField.caption]));
       end;
+  end;
+end;
+
+function indexOfBitFieldInValuesGroup(const bitFieldName: string; constref valuegroups: TValueGroups): integer;
+var
+  i: integer;
+begin
+  Result := -1;
+  i := 0;
+  if bitFieldName <> '' then
+  begin
+    while (i < length(valuegroups)) and ((CompareText(bitFieldName, valuegroups[i].aname) <> 0)) do
+      inc(i);
+
+    if i < length(valuegroups) then
+      Result := i;
+  end;
+end;
+
+procedure processValueGroup(constref ValueGroup: TValueGroup; const bitFieldOffset: integer; constref List: TStrings);
+var
+  i: integer;
+  s: string;
+begin
+ // Compose value name as [bitfield name]_[value name]
+  i := pos('_', ValueGroup.aname);
+  if i > 0 then
+    s := copy(ValueGroup.aname, i+1, 255) + '_'
+  else
+    s := '';
+
+  for i := 0 to high(ValueGroup.values) do
+  begin
+    // Ensure const name doesn't start with a numerical character
+    if (s = '') and (valueGroup.values[i].aname[1] in ['0'..'9']) then
+      s := '_';
+    List.Add(format('    %s = $%.2x;',
+      [s + valueGroup.values[i].aname, valueGroup.values[i].value shl bitFieldOffset]));
+  end;
+end;
+
+procedure processBitFieldAsMask(constref bitField: TBitField; constref valuegroups: TValueGroups; constref List: TStrings; const indentSpaces: byte; const maskOnly: boolean = false);
+var
+  i, bitsInMask, mask, lsb: integer;
+  idx, bmp, padding, s1, s2: string;
+begin
+  idx := 'bp';
+  bmp := '';
+  SetLength(padding, indentSpaces);
+  FillChar(padding[1], indentSpaces, ' ');
+
+  // List of values are supplied
+  if bitField.values <> '' then
+  begin
+    i := indexOfBitFieldInValuesGroup(bitField.values, valuegroups);
+    if i > -1 then
+    begin
+      // Find LSB position of value mask
+      lsb := 0;
+      mask := bitField.mask;
+      while (mask > 0) and ((mask and 1) = 0) do
+      begin
+       inc(lsb);
+       mask := mask shr 1;
+      end;
+      // mask is now the largest possible valid value
+      // Check last value in value-group against mask
+      if valuegroups[i].values[high(valuegroups[i].values)].value > mask then
+        List.Add('// **** Inconsistency between mask and values for ' +bitField.aname);
+
+      List.Add(padding + '// ' + bitField.values); // perhaps strip module prefix?
+      List.Add(padding + bitField.aname + ' = $' + IntToHex(bitField.mask, 2) + ';');
+      processValueGroup(valuegroups[i], lsb, List);
+    end
+    else
+      List.Add('Unexpectedly no matching value-group for "' + bitField.values + '"');
+  end
+  else
+  begin
+    List.Add(padding + '// ' + bitField.caption);
+    // check if single bit value
+    if bitField.mask in [1, 2, 4, 8, 16, 32, 64, 128] then
+    begin
+      s1 := format('%s = $%.2x;',
+                   [bitField.aname + bmp, bitField.mask]);
+
+      if not maskOnly then
+      begin
+        s2 := format('%s = $%.2x;',
+                    [bitField.aname + idx, round(log2(bitField.mask))]);
+      end;
+
+      if maskOnly then
+        List.Add(padding + s1)
+      else
+        List.Add(padding + s1 + '  ' + s2);
+    end
+    else  // expand mask into several bit definitions
+    begin
+      bitsInMask := -1;     // identify lowest bit label
+      for i := 0 to 7 do
+        if ((1 shl i) and bitField.mask) > 0 then
+        begin
+          inc(bitsInMask);  // zero based
+          s1 := format('%s = $%.2x;',
+                [bitField.aname + IntToStr(bitsInMask + bitField.lsb) + bmp, 1 shl i]);
+
+          if not maskOnly then
+          begin
+            s2 := format(padding + '%s = $%.2x;',
+                  [bitField.aname + IntToStr(bitsInMask + bitField.lsb) + idx, i]);
+            List.Add(padding + s1 + '  ' + s2);
+          end
+          else
+            List.Add(padding + s1);
+        end;
+    end;
   end;
 end;
 
@@ -350,8 +475,8 @@ begin
         else
           comment := '  // ' + b.caption;
 
-        // check if single bit value
-        if reg.bitFields[j].mask in [1, 2, 4, 8, 16, 32, 64, 128] then
+        // if values has been assigned then there is a corresponding value-group to expand
+        if reg.bitFields[j].values = '' then
         begin
           if (bitmask and reg.bitFields[j].mask) = 0 then
           begin
@@ -875,6 +1000,47 @@ begin
   end;
 end;
 
+function findBitFieldOffsetByValues(constref m: TModule; values: string): integer;
+var
+  i, j, k: integer;
+  tmp: uint16;
+  found: boolean;
+begin
+  result := -1;
+  i := 0;
+  found := false;
+  while (i <= high(m.registerGroups)) and not found do
+  begin
+    j := 0;
+    while (j <= high(m.registerGroups[i].registers)) and not found do
+    begin
+      k := 0;
+      while (k <= high(m.registerGroups[i].registers[j].bitFields)) and not found do
+      begin
+        found := CompareText(m.registerGroups[i].registers[j].bitFields[k].values, values) = 0;
+        if found then
+        begin
+          tmp := m.registerGroups[i].registers[j].bitFields[k].mask;
+          if tmp = 0 then  // older avr's use lsb to indicate start of multi-bit fields
+            tmp := m.registerGroups[i].registers[j].bitFields[k].lsb
+          else
+          begin
+            result := 0;
+            while (tmp > 0) and ((tmp and 1) = 0) do
+            begin
+              tmp := tmp shr 1;
+              inc(Result);
+            end;
+          end;
+        end;
+        inc(k);
+      end;
+      inc(j);
+    end;
+    inc(i);
+  end;
+end;
+
 // Generate record style decalarations for register groups
 // type
 // TRSTCTRL = record //Reset controller
@@ -982,7 +1148,7 @@ begin
                 end;
               end;
               if isUniqueBitField then
-                processBitField(r.bitFields[tmp], bitFieldList, 4);
+                processBitFieldAsMask(r.bitFields[tmp], m.valueGroups, bitFieldList, 4, true);
             end;
           end;
         end;
@@ -1008,12 +1174,6 @@ begin
           List.Add(reverseList[k]);
 
         reverseList.Clear;
-        if bitFieldList.Count > 1 then // list always starts with 'const' as first item
-          List.AddStrings(bitFieldList);
-
-        List.Add('  end;');
-        List.Add('');
-        bitFieldList.Clear;
       end  // if
       else if m.registerGroups[j].class_ = 'union' then
       begin
@@ -1022,13 +1182,17 @@ begin
         List.Add('    case byte of');
         for k := 0 to high(m.registerGroups[j].registers) do
           List.Add(format('      %d: (%s: T%s);', [k, m.registerGroups[j].registers[k].aname, m.registerGroups[j].registers[k].caption]));
-
-        List.Add('    end;');
-        List.Add('');
       end
       else
         List.Add('Error unexpected class type: '+m.registerGroups[j].class_);
     end;
+
+    if bitFieldList.Count > 1 then // list always starts with 'const' as first item
+      List.AddStrings(bitFieldList);
+
+    List.Add('  end;');
+    List.Add('');
+    bitFieldList.Clear;
   end;
   reverseList.Free;
   bitFieldList.Free;
