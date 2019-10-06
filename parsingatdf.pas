@@ -69,7 +69,7 @@ type
     caption,
     values: string;    // values only set when enumeration are given in value-group
     mask,
-    lsb: integer;         // offset for bit name index
+    lsb: integer;      // offset for bit name index - seems to be used for multibit value when there isn't a value-group
   end;
   TBitFields = array of TBitField;
 
@@ -98,7 +98,6 @@ type
     caption: string;
     value: integer;
   end;
-
   TValueGroup = record
     aname,
     caption: string;
@@ -402,27 +401,39 @@ begin
               Result[i].registerGroups[j].registers[k].initVal :=
                 safeAttributeInteger(rNode.Attributes.GetNamedItem('initval'));
 
-              bfNode := rNode.FindNode('bitfield');
-              while Assigned(bfNode) and (bfNode.NodeName = 'bitfield') do
+              bfNode := rNode.FirstChild;
+              while Assigned(bfNode) do
               begin
-                if bfNode.NodeType <> COMMENT_NODE then
+                if bfNode.NodeName = 'mode' then
+                  bfNode := bfNode.FirstChild
+                else
                 begin
-                  l := Length(Result[i].registerGroups[j].registers[k].bitFields);
-                  SetLength(Result[i].registerGroups[j].registers[k].bitFields, l+1);
+                  if bfNode.NodeType <> COMMENT_NODE then
+                  begin
+                    l := Length(Result[i].registerGroups[j].registers[k].bitFields);
+                    SetLength(Result[i].registerGroups[j].registers[k].bitFields, l+1);
 
-                  Result[i].registerGroups[j].registers[k].bitFields[l].aname :=
-                    safeAttributeValue(bfNode.Attributes.GetNamedItem('name'));
-                  Result[i].registerGroups[j].registers[k].bitFields[l].caption :=
-                    safeAttributeValue(bfNode.Attributes.GetNamedItem('caption'));
-                  Result[i].registerGroups[j].registers[k].bitFields[l].values :=
-                    safeAttributeValue(bfNode.Attributes.GetNamedItem('values'));
-                  Result[i].registerGroups[j].registers[k].bitFields[l].lsb :=
-                    safeAttributeInteger(bfNode.Attributes.GetNamedItem('lsb'));
-                  Result[i].registerGroups[j].registers[k].bitFields[l].mask :=
-                    safeAttributeInteger(bfNode.Attributes.GetNamedItem('mask'));
+                    Result[i].registerGroups[j].registers[k].bitFields[l].aname :=
+                      safeAttributeValue(bfNode.Attributes.GetNamedItem('name'));
+                    Result[i].registerGroups[j].registers[k].bitFields[l].caption :=
+                      safeAttributeValue(bfNode.Attributes.GetNamedItem('caption'));
+                    Result[i].registerGroups[j].registers[k].bitFields[l].values :=
+                      safeAttributeValue(bfNode.Attributes.GetNamedItem('values'));
+                    Result[i].registerGroups[j].registers[k].bitFields[l].lsb :=
+                      safeAttributeInteger(bfNode.Attributes.GetNamedItem('lsb'));
+                    Result[i].registerGroups[j].registers[k].bitFields[l].mask :=
+                      safeAttributeInteger(bfNode.Attributes.GetNamedItem('mask'));
+                  end;
+
+                  if Assigned(bfNode.NextSibling) then
+                    bfNode := bfNode.NextSibling
+                  else if bfNode.ParentNode.NodeName = 'mode' then
+                  begin // move up a level, then move to next child
+                    bfNode := bfNode.ParentNode.NextSibling;
+                  end
+                  else
+                    bfNode := nil;
                 end;
-
-                bfNode := bfNode.NextSibling;
               end;
             end
             else if (rNode.NodeName = 'register-group') then
