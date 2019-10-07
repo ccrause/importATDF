@@ -288,8 +288,9 @@ var
   i, bitsInMask, mask, lsb: integer;
   idx, bmp, padding, s1, s2: string;
 begin
+  // GCC convention
   idx := 'bp';
-  bmp := '';
+  bmp := 'bm';
   SetLength(padding, indentSpaces);
   FillChar(padding[1], indentSpaces, ' ');
 
@@ -313,7 +314,14 @@ begin
         List.Add('// **** Inconsistency between mask and values for ' +bitField.aname);
 
       List.Add(padding + '// ' + bitField.values); // perhaps strip module prefix?
-      List.Add(padding + bitField.aname + ' = $' + IntToHex(bitField.mask, 2) + ';');
+      // Add generic bit mask for whole value group
+      // Some registers have multiple modes - this seems to be encoded in the values-group name
+      // as MODULE_MODE_BITFIELDNAME
+      // Strip MODULE_ then MODE_BITFIELDNAME ensures a unique name
+      // Also work for standard case which is labeled MODULE_BITFIELDNAME
+      //List.Add(padding + bitField.aname+'mask = $' + IntToHex(bitField.mask, 2) + ';');
+      s1 := Copy(bitField.values, pos('_', bitField.values)+1, 255);
+      List.Add(padding + s1+'mask = $' + IntToHex(bitField.mask, 2) + ';');
       processValueGroup(valuegroups[i], lsb, List);
     end
     else
@@ -321,6 +329,8 @@ begin
   end
   else
   begin
+   // Single bits may share a name with a register - not compatible with Pascal
+   // Need to add something to ensure uniqueness
     List.Add(padding + '// ' + bitField.caption);
     // check if single bit value
     if bitField.mask in [1, 2, 4, 8, 16, 32, 64, 128] then
@@ -1174,6 +1184,10 @@ begin
           List.Add(reverseList[k]);
 
         reverseList.Clear;
+        if bitFieldList.Count > 1 then // list always starts with 'const' as first item
+          List.AddStrings(bitFieldList);
+
+        List.Add('  end;');
       end  // if
       else if m.registerGroups[j].class_ = 'union' then
       begin
@@ -1182,18 +1196,16 @@ begin
         List.Add('    case byte of');
         for k := 0 to high(m.registerGroups[j].registers) do
           List.Add(format('      %d: (%s: T%s);', [k, m.registerGroups[j].registers[k].aname, m.registerGroups[j].registers[k].caption]));
+        List.Add('  end;');
       end
       else
         List.Add('Error unexpected class type: '+m.registerGroups[j].class_);
+
+      List.Add('');
+      bitFieldList.Clear;
     end;
-
-    if bitFieldList.Count > 1 then // list always starts with 'const' as first item
-      List.AddStrings(bitFieldList);
-
-    List.Add('  end;');
-    List.Add('');
-    bitFieldList.Clear;
   end;
+
   reverseList.Free;
   bitFieldList.Free;
 
