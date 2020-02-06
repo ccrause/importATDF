@@ -197,6 +197,47 @@ begin
   FreeAndNil(bitFieldList);
 end;
 
+procedure processBitFieldOldStyle(constref bitField: TBitField; constref List: TStrings; const indentSpaces: byte; const maskOnly: boolean = false);
+var
+  i, bitsInMask: integer;
+  idx, {bmp,} padding, s1, s2: string;
+begin
+  idx := '';
+  //bmp := 'bm';
+  SetLength(padding, indentSpaces);
+  FillChar(padding[1], indentSpaces, ' ');
+
+  // check if single bit value
+  if bitField.mask in [1, 2, 4, 8, 16, 32, 64, 128] then
+  begin
+    if not maskOnly then
+    begin
+      s1 := format('%s = $%.2x;',
+                  [bitField.aname + idx, round(log2(bitField.mask))]);
+    end;
+
+    if maskOnly then
+      List.Add(padding + s2)
+    else
+      List.Add(padding + s1 + '  ' + s2);
+  end
+  else if not maskOnly then// expand mask into several bit definitions
+  begin
+    bitsInMask := -1;     // identify lowest bit label
+    for i := 0 to 7 do
+      if ((1 shl i) and bitField.mask) > 0 then
+      begin
+        inc(bitsInMask);  // zero based
+        if bitField.caption = '' then
+          List.Add(format(padding + '%s = $%.2x;',
+            [bitField.aname + IntToStr(bitsInMask + bitField.lsb) + idx, i]))
+        else
+          List.Add(format(padding + '%s = $%.2x;  // %s',
+            [bitField.aname + IntToStr(bitsInMask + bitField.lsb) + idx, i, bitField.caption]));
+      end;
+  end;
+end;
+
 procedure processBitField(constref bitField: TBitField; constref List: TStrings; const indentSpaces: byte; const maskOnly: boolean = false);
 var
   i, bitsInMask: integer;
@@ -370,6 +411,72 @@ begin
         end;
     end;
   end;
+end;
+
+// Plain style var declaration per register
+// var
+//  PORTB: byte absolute $25;  // Port B Data Register
+//  PORTC: byte absolute $..;  // Port B Data Register
+// followed by bit field declarations
+// const
+//  PB0 = 0;
+procedure generateDeclarationsOpt0(constref device: TDevice; var List: TStrings);
+var
+  i, j, k, bitsInMask: integer;
+  sortedRegs: TSortedRegs;
+  r: TReg;
+  b: TBitField;
+  comment: string;
+  bitDefs: TStringList;
+begin
+  sortedRegs := sortedRegisters(device);
+  bitDefs := TStringList.Create;
+  bitDefs.Add('const');
+
+  List.Add('var');
+  for i := 0 to length(sortedRegs)-1 do
+  begin
+    r := sortedRegs[i];
+    if r.aname <> '' then
+    begin
+      if r.caption <> '' then
+        comment := '  // ' + r.caption
+      else
+        comment := '';
+
+      if r.size = 1 then
+        List.Add(format('  %s: byte absolute $%.2x;%s', [r.aname, r.address, comment]))
+      else if r.size = 2 then
+      begin
+        List.Add(format('  %s: word absolute $%.2x;%s', [r.aname, r.address, comment]));
+        List.Add(format('  %sL: byte absolute $%.2x;%s', [r.aname, r.address, comment]));
+        List.Add(format('  %sH: byte absolute $%.2x;%s;', [r.aname, r.address+1, comment]));
+      end
+      else if r.size = 4 then
+      begin
+        List.Add(format('  %s: dword absolute $%.2x;%s', [r.aname, r.address, comment]));
+        List.Add(format('  %sL: word absolute $%.2x;', [r.aname, r.address]));
+        List.Add(format('  %sH: word absolute $%.2x;', [r.aname, r.address+2]));
+      end
+      else
+      raise Exception.Create('Unexpected register size:: $' + IntToHex(r.size, 2));
+
+      // Bit fields
+      if length(r.bitFields) > 0 then
+      begin
+        if r.caption <> '' then
+        bitDefs.Add('  // '+r.caption);
+        for j := 0 to high(r.bitFields) do
+          processBitFieldOldStyle(r.bitFields[j], bitDefs, 2);
+      end;
+    end;
+  end;
+  if bitDefs.Count > 1 then
+  begin
+    List.Add('');
+    List.Append(bitDefs.Text);
+  end;
+  bitDefs.Free;
 end;
 
 // Plain style var declaration per register
@@ -863,7 +970,7 @@ begin
     SL.Add('unit ' + device.deviceName + ';');
     SL.Add(#13#10'{$goto on}'#13#10'interface'#13#10);
 
-    generateDeclarationsOpt1(device, SL);
+    generateDeclarationsOpt0(device, SL);
     //generateDeclarationsOpt2(device, SL);
 
     if pgmsize > 8192 then
