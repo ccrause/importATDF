@@ -41,6 +41,13 @@ uses
 
 {$R *.lfm}
 
+type
+  TMemoryMap = record
+    flashbase, flashsize,
+    srambase, sramsize,
+    eeprombase, eepromsize: integer;
+  end;
+
 { TForm1 }
 
 procedure TForm1.OpenMenuItemClick(Sender: TObject);
@@ -72,7 +79,6 @@ begin
   begin
     SL := TStringList.Create;
     ControllerInfo := TStringList.Create;
-    ControllerInfo.Add('DeviceName,Architecture,Family,DeviceType,Flash start,Flash size,SRAM start,SRAM size,EEPROM start,EEPROM size');
     mculist := 'CPU_UNITS=';
 
     sourcepath := IncludeTrailingPathDelimiter(ExtractFileDir(OpenDialog1.FileName));
@@ -131,11 +137,9 @@ end;
 function unpackAddressSpaces(constref dev: TDevice): string;
 var
   i, j: integer;
-  s1, s2, s3: string;
+  memmap: TMemoryMap;
 begin
-  s1 := '0,0';
-  s2 := '0,0';
-  s3 := '0,0';
+  FillByte(memmap, SizeOf(memmap), 0);
   for i := 0 to High(dev.AddressSpaces) do
   begin
     if CompareText(dev.AddressSpaces[i].id, 'prog') = 0 then
@@ -145,8 +149,8 @@ begin
         if (CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'FLASH') = 0) or
            (CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'PROGMEM') = 0) then
         begin
-          s1 := IntToStr(dev.AddressSpaces[i].memorySegments[j].start) + ',' +
-                IntToStr(dev.AddressSpaces[i].memorySegments[j].size);
+          memmap.flashbase := dev.AddressSpaces[i].memorySegments[j].start;
+          memmap.flashsize := dev.AddressSpaces[i].memorySegments[j].size;
           Break;
         end;
       end;
@@ -158,25 +162,30 @@ begin
         if (dev.AddressSpaces[i].memorySegments[j].aname = 'IRAM') or
            (dev.AddressSpaces[i].memorySegments[j].aname = 'INTERNAL_SRAM') then
         begin
-          s2 := IntToStr(dev.AddressSpaces[i].memorySegments[j].start) + ',' +
-                IntToStr(dev.AddressSpaces[i].memorySegments[j].size);
+          memmap.srambase := dev.AddressSpaces[i].memorySegments[j].start;
+          memmap.sramsize := dev.AddressSpaces[i].memorySegments[j].size;
           Break;
         end
         else if CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'EEPROM') = 0 then
         begin
-          s3 := IntToStr(dev.AddressSpaces[i].memorySegments[j].start) + ',' +
-                IntToStr(dev.AddressSpaces[i].memorySegments[j].size);
+          memmap.eeprombase := dev.AddressSpaces[i].memorySegments[j].start;
+          memmap.eepromsize := dev.AddressSpaces[i].memorySegments[j].size;
         end;
       end;
     end
     else if CompareText(dev.AddressSpaces[i].id, 'eeprom') = 0 then
-      s3 := '0,' + IntToStr(dev.AddressSpaces[i].size);
+    begin
+      memmap.eeprombase := 0;
+      memmap.eepromsize := dev.AddressSpaces[i].size;
+    end;
   end;
-  Result := dev.deviceName + ',' +
-            dev.architechture + ','  +
-            dev.family + ',' +
-            loadDeviceType(dev.deviceName) + ',' +
-            s1 + ',' + s2 + ',' + s3;
+
+  Result := format(',(controllertypestr:''%s'';controllerunitstr:''%s'';cputype:%s;fputype:fpu_soft;flashbase:%d;flashsize:%d;srambase:%d;sramsize:%d;eeprombase:%d;eepromsize:%d)',
+            [UpperCase(dev.deviceName), UpperCase(dev.deviceName),
+             'cpu_' + loadDeviceType(dev.deviceName),
+             memmap.flashbase, memmap.flashsize,
+             memmap.srambase, memmap.sramsize,
+             memmap.eeprombase, memmap.eepromsize]);
 end;
 
 procedure ParseFile(FileName: string; SL: TStrings);
