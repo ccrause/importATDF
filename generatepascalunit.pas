@@ -968,7 +968,7 @@ begin
 
     SL.Clear;
     SL.Add('unit ' + device.deviceName + ';');
-    SL.Add(#13#10'{$goto on}'#13#10'interface'#13#10);
+    SL.Add(#13#10'interface'#13#10);
 
     generateDeclarationsOpt0(device, SL);
     //generateDeclarationsOpt2(device, SL);
@@ -986,14 +986,15 @@ begin
              device.Interrupts[i].index, device.Interrupts[i].caption]));
     end;
 
-    SL.Add(#13#10'procedure _FPC_start; assembler; nostackframe;'#13#10'label'#13#10'  _start;'#13#10 +
-                    'asm'#13#10'  .init'#13#10'  .globl _start'#13#10#13#10'  '+jmpInstr+' _start');
+    SL.Add(#13#10'procedure _FPC_start; assembler; nostackframe; noreturn; public name '+
+           '''_START''; section ''.init'';'#13#10 +
+           'asm'#13#10'  '+jmpInstr+' __dtors_end');
 
     for i := 0 to High(device.Interrupts) do
       if device.Interrupts[i].index <> 0 then
         SL.Add('  '+jmpInstr+' ' + device.Interrupts[i].name + '_ISR');
 
-    SL.Add(#13#10'  {$i '+startInc+'.inc}'#13#10);
+    SL.Add('');
     for i := 0 to High(device.Interrupts) do
       if device.Interrupts[i].index <> 0 then
         SL.Add('  .weak ' + device.Interrupts[i].name + '_ISR');
@@ -1359,7 +1360,7 @@ begin
 
     SL.Clear;
     SL.Add('unit ' + device.deviceName + ';');
-    SL.Add(#13#10'{$goto on}'#13#10'interface'#13#10);
+    SL.Add(#13#10'interface'#13#10);
 
     //generateDeclarationsOpt1(device, SL);
     //generateDeclarationsOpt2(device, SL);
@@ -1384,8 +1385,9 @@ begin
       prevID := device.Interrupts[i].index;
     end;
 
-    SL.Add(#13#10'procedure _FPC_start; assembler; nostackframe;'#13#10'label'#13#10'  _start;'#13#10 +
-                    'asm'#13#10'  .init'#13#10'  .globl _start'#13#10#13#10'  '+jmpInstr+' _start');
+    SL.Add(#13#10'procedure _FPC_start; assembler; nostackframe; noreturn; public name '+
+           '''_START''; section ''.init'';'#13#10 +
+           'asm'#13#10'  '+jmpInstr+' __dtors_end');
 
     prevID := 0;
     for i := 0 to High(device.Interrupts) do
@@ -1398,7 +1400,7 @@ begin
       prevID := device.Interrupts[i].index;
     end;
 
-    SL.Add(#13#10'  {$i '+startInc+'.inc}'#13#10);
+    SL.Add('');
     prevID := 0;
     for i := 0 to High(device.Interrupts) do
     begin
