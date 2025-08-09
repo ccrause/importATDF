@@ -45,7 +45,8 @@ type
   TMemoryMap = record
     flashbase, flashsize,
     srambase, sramsize,
-    eeprombase, eepromsize: integer;
+    eeprombase, eepromsize,
+    bootbase, bootsize: integer;
   end;
 
 { TForm1 }
@@ -79,6 +80,7 @@ begin
   begin
     SL := TStringList.Create;
     ControllerInfo := TStringList.Create;
+    ControllerInfo.Sorted := true;
     mculist := 'CPU_UNITS=';
 
     sourcepath := IncludeTrailingPathDelimiter(ExtractFileDir(OpenDialog1.FileName));
@@ -151,7 +153,16 @@ begin
         begin
           memmap.flashbase := dev.AddressSpaces[i].memorySegments[j].start;
           memmap.flashsize := dev.AddressSpaces[i].memorySegments[j].size;
-          Break;
+          //Break;
+        end
+            // typ FLASH + BOOT_SECTION_1 .. BOOT_SECTION_4
+        else if (CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'BOOT_SECTION_4') = 0) or
+           // or simply FLASH + BOOT_SECTION_1
+           (length(dev.AddressSpaces[i].memorySegments) < 5) and
+            ((CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'BOOT_SECTION_1') = 0)) then
+        begin
+          memmap.bootbase := dev.AddressSpaces[i].memorySegments[j].start;
+          memmap.bootsize := dev.AddressSpaces[i].memorySegments[j].size;
         end;
       end;
     end
@@ -180,12 +191,25 @@ begin
     end;
   end;
 
-  Result := format(',(controllertypestr:''%s'';controllerunitstr:''%s'';cputype:%s;fputype:fpu_soft;flashbase:%d;flashsize:%d;srambase:%d;sramsize:%d;eeprombase:%d;eepromsize:%d)',
+  if memmap.bootbase > 0 then
+    Result := format(',(controllertypestr:''%s'';controllerunitstr:''%s'';cputype:%s;'+
+            'fputype:fpu_soft;flashbase:%d;flashsize:%d;srambase:%d;sramsize:%d;'+
+            'eeprombase:%d;eepromsize:%d;bootbase:%d:bootsize:%d)',
             [UpperCase(dev.deviceName), UpperCase(dev.deviceName),
              'cpu_' + loadDeviceType(dev.deviceName),
              memmap.flashbase, memmap.flashsize,
              memmap.srambase, memmap.sramsize,
-             memmap.eeprombase, memmap.eepromsize]);
+             memmap.eeprombase, memmap.eepromsize,
+             memmap.bootbase, memmap.bootsize])
+    else
+      Result := format(',(controllertypestr:''%s'';controllerunitstr:''%s'';cputype:%s;'+
+              'fputype:fpu_soft;flashbase:%d;flashsize:%d;srambase:%d;sramsize:%d;'+
+              'eeprombase:%d;eepromsize:%d)',
+              [UpperCase(dev.deviceName), UpperCase(dev.deviceName),
+               'cpu_' + loadDeviceType(dev.deviceName),
+               memmap.flashbase, memmap.flashsize,
+               memmap.srambase, memmap.sramsize,
+               memmap.eeprombase, memmap.eepromsize]);
 end;
 
 procedure ParseFile(FileName: string; SL: TStrings);
