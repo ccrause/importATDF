@@ -37,7 +37,8 @@ procedure ParseFile(FileName: string; SL: TStrings);
 implementation
 
 uses
-  XMLRead, dom, parsingATDF, generatepascalunit;
+  XMLRead, dom, parsingATDF, generatepascalunit,
+  subarchinfo;
 
 {$R *.lfm}
 
@@ -112,12 +113,12 @@ begin
   end;
 end;
 
-function loadDeviceType(deviceName: string): string;
+function loadSubarch(deviceName: string): TSubArch;
 var
   sr: TSearchRec;
   s: string;
 begin
-  result := '';
+  result := avrunknown;
   s := '../gcc/dev/';
   if not DirectoryExists(s) then // possibly work from nested subdirectory, so move up hierarchy
     s := '../'+s;
@@ -129,19 +130,20 @@ begin
     s := ExtractFileName(sr.Name);
     if pos('avr', s) > 0 then
     begin
-      result := s;
+      //result := s;
       Break;
     end;
   until FindNext(sr) <> 0;
   FindClose(sr);
+
+  Result := stringToSubarch(s);
 end;
 
-function unpackAddressSpaces(constref dev: TDevice): string;
+function unpackAddressSpaces(constref dev: TDevice): TMemoryMap;
 var
   i, j: integer;
-  memmap: TMemoryMap;
 begin
-  FillByte(memmap, SizeOf(memmap), 0);
+  FillByte(Result, SizeOf(Result), 0);
   for i := 0 to High(dev.AddressSpaces) do
   begin
     if CompareText(dev.AddressSpaces[i].id, 'prog') = 0 then
@@ -151,8 +153,8 @@ begin
         if (CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'FLASH') = 0) or
            (CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'PROGMEM') = 0) then
         begin
-          memmap.flashbase := dev.AddressSpaces[i].memorySegments[j].start;
-          memmap.flashsize := dev.AddressSpaces[i].memorySegments[j].size;
+          Result.flashbase := dev.AddressSpaces[i].memorySegments[j].start;
+          Result.flashsize := dev.AddressSpaces[i].memorySegments[j].size;
           //Break;
         end
             // typ FLASH + BOOT_SECTION_1 .. BOOT_SECTION_4
@@ -161,8 +163,8 @@ begin
            (length(dev.AddressSpaces[i].memorySegments) < 5) and
             ((CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'BOOT_SECTION_1') = 0)) then
         begin
-          memmap.bootbase := dev.AddressSpaces[i].memorySegments[j].start;
-          memmap.bootsize := dev.AddressSpaces[i].memorySegments[j].size;
+          Result.bootbase := dev.AddressSpaces[i].memorySegments[j].start;
+          Result.bootsize := dev.AddressSpaces[i].memorySegments[j].size;
         end;
       end;
     end
@@ -173,50 +175,68 @@ begin
         if (dev.AddressSpaces[i].memorySegments[j].aname = 'IRAM') or
            (dev.AddressSpaces[i].memorySegments[j].aname = 'INTERNAL_SRAM') then
         begin
-          memmap.srambase := dev.AddressSpaces[i].memorySegments[j].start;
-          memmap.sramsize := dev.AddressSpaces[i].memorySegments[j].size;
+          Result.srambase := dev.AddressSpaces[i].memorySegments[j].start;
+          Result.sramsize := dev.AddressSpaces[i].memorySegments[j].size;
           Break;
         end
         else if CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'EEPROM') = 0 then
         begin
-          memmap.eeprombase := dev.AddressSpaces[i].memorySegments[j].start;
-          memmap.eepromsize := dev.AddressSpaces[i].memorySegments[j].size;
+          Result.eeprombase := dev.AddressSpaces[i].memorySegments[j].start;
+          Result.eepromsize := dev.AddressSpaces[i].memorySegments[j].size;
         end;
       end;
     end
     else if CompareText(dev.AddressSpaces[i].id, 'eeprom') = 0 then
     begin
-      memmap.eeprombase := 0;
-      memmap.eepromsize := dev.AddressSpaces[i].size;
+      Result.eeprombase := 0;
+      Result.eepromsize := dev.AddressSpaces[i].size;
     end;
   end;
+end;
+
+function generateCPUInfo(constref dev: TDevice; const memmap: TMemoryMap;
+  subarch: TSubarch): string;
+var
+  flagged: boolean = false;
+begin
+  // Check that subarch and memory size is aligned
+  if ((subarch = avr35) and (memmap.flashsize <= 8192)) or
+     ((subarch = avr5) and (memmap.flashsize <= 8192)) or
+     ((subarch = avr51) and (memmap.flashsize < 131072)) or
+     ((subarch = avr6) and (memmap.flashsize < 262144)) then
+    flagged := true;
 
   if memmap.bootbase > 0 then
     Result := format(',(controllertypestr:''%s'';controllerunitstr:''%s'';cputype:%s;'+
             'fputype:fpu_soft;flashbase:%d;flashsize:%d;srambase:%d;sramsize:%d;'+
             'eeprombase:%d;eepromsize:%d;bootbase:%d:bootsize:%d)',
             [UpperCase(dev.deviceName), UpperCase(dev.deviceName),
-             'cpu_' + loadDeviceType(dev.deviceName),
+             'cpu_' + subarchNames[subarch],
              memmap.flashbase, memmap.flashsize,
              memmap.srambase, memmap.sramsize,
              memmap.eeprombase, memmap.eepromsize,
              memmap.bootbase, memmap.bootsize])
-    else
-      Result := format(',(controllertypestr:''%s'';controllerunitstr:''%s'';cputype:%s;'+
-              'fputype:fpu_soft;flashbase:%d;flashsize:%d;srambase:%d;sramsize:%d;'+
-              'eeprombase:%d;eepromsize:%d)',
-              [UpperCase(dev.deviceName), UpperCase(dev.deviceName),
-               'cpu_' + loadDeviceType(dev.deviceName),
-               memmap.flashbase, memmap.flashsize,
-               memmap.srambase, memmap.sramsize,
-               memmap.eeprombase, memmap.eepromsize]);
+  else
+    Result := format(',(controllertypestr:''%s'';controllerunitstr:''%s'';cputype:%s;'+
+            'fputype:fpu_soft;flashbase:%d;flashsize:%d;srambase:%d;sramsize:%d;'+
+            'eeprombase:%d;eepromsize:%d)',
+            [UpperCase(dev.deviceName), UpperCase(dev.deviceName),
+            'cpu_' + subarchNames[subarch],
+             memmap.flashbase, memmap.flashsize,
+             memmap.srambase, memmap.sramsize,
+             memmap.eeprombase, memmap.eepromsize]);
+
+  if flagged then
+    Result := '>> ' + Result;
 end;
 
 procedure ParseFile(FileName: string; SL: TStrings);
 var
   Doc: TXMLDocument;
   device: TDevice;
+  memmap: TMemoryMap;
   s: string;
+  subarch: TSubarch;
 begin
   ReadXMLFile(Doc, FileName);
   device := parseDevice(Doc.DocumentElement);
@@ -229,7 +249,9 @@ begin
 
   if Assigned(ControllerInfo) then
   begin
-    s := unpackAddressSpaces(device);
+    memmap := unpackAddressSpaces(device);
+    subarch := loadSubarch(device.deviceName);
+    s := generateCPUInfo(device, memmap, subarch);
     ControllerInfo.Add(s);
   end;
 end;
