@@ -151,14 +151,18 @@ begin
       for j := 0 to High(dev.AddressSpaces[i].memorySegments) do
       begin
         if (CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'FLASH') = 0) or
-           (CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'PROGMEM') = 0) then
+           (CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'PROGMEM') = 0) or
+           // XMega devices, this will exclude the bootsection from the flash size
+           (CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'APP_SECTION') = 0) then
         begin
           Result.flashbase := dev.AddressSpaces[i].memorySegments[j].start;
           Result.flashsize := dev.AddressSpaces[i].memorySegments[j].size;
-          //Break;
         end
-            // typ FLASH + BOOT_SECTION_1 .. BOOT_SECTION_4
+
+        // typ FLASH + BOOT_SECTION_1 .. BOOT_SECTION_4
         else if (CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'BOOT_SECTION_4') = 0) or
+                // XMega devices
+                (CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'BOOT_SECTION') = 0) or
            // or simply FLASH + BOOT_SECTION_1
            (length(dev.AddressSpaces[i].memorySegments) < 5) and
             ((CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'BOOT_SECTION_1') = 0)) then
@@ -242,7 +246,8 @@ begin
   device := parseDevice(Doc.DocumentElement);
   FreeAndNil(Doc);
 
-  if device.architechture = 'AVR8X' then
+  if (device.architechture = 'AVR8X') or
+     (device.architechture = 'AVR8_XMEGA') then
     generateUnitXFromATDFInfo(device, SL)
   else
     generateUnitFromATDFInfo(device, SL);

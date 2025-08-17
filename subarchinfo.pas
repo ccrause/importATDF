@@ -15,7 +15,12 @@ type
     avr5,
     avr51,
     avr6,
+    avrxmega2,
     avrxmega3,
+    avrxmega4,
+    avrxmega5,
+    avrxmega6,
+    avrxmega7,
     avrunknown);
 
 const
@@ -31,7 +36,12 @@ const
      'avr5',
      'avr51',
      'avr6',
+     'avrxmega2',
      'avrxmega3',
+     'avrxmega4',
+     'avrxmega5',
+     'avrxmega6',
+     'avrxmega7',
      'avrunknown');
 
 function stringToSubarch(s: string): TSubarch;

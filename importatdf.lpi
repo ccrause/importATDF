@@ -19,13 +19,13 @@
     </PublishOptions>
     <RunParams>
       <local>
-        <CommandLineParams Value="&quot;/home/christo/Desktop/Electronics/Atmel info/atpack/atdf/ATmega4809.atdf&quot;"/>
+        <CommandLineParams Value="&quot;/home/christo/Desktop/Electronics/AVR/atpack-xmega/atdf/ATxmega8E5.atdf&quot;"/>
       </local>
       <FormatVersion Value="2"/>
       <Modes Count="1">
         <Mode0 Name="default">
           <local>
-            <CommandLineParams Value="&quot;/home/christo/Desktop/Electronics/Atmel info/atpack/atdf/ATmega4809.atdf&quot;"/>
+            <CommandLineParams Value="&quot;/home/christo/Desktop/Electronics/AVR/atpack-xmega/atdf/ATxmega8E5.atdf&quot;"/>
           </local>
         </Mode0>
       </Modes>
@@ -35,7 +35,7 @@
         <PackageName Value="LCL"/>
       </Item1>
     </RequiredPackages>
-    <Units Count="4">
+    <Units Count="5">
       <Unit0>
         <Filename Value="importatdf.lpr"/>
         <IsPartOfProject Value="True"/>
@@ -57,6 +57,10 @@
         <Filename Value="generatepascalunit.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit3>
+      <Unit4>
+        <Filename Value="subarchinfo.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit4>
     </Units>
   </ProjectOptions>
   <CompilerOptions>
@@ -77,6 +81,7 @@
     </CodeGeneration>
     <Linking>
       <Debugging>
+        <DebugInfoType Value="dsDwarf2Set"/>
         <UseHeaptrc Value="True"/>
         <TrashVariables Value="True"/>
       </Debugging>
@@ -86,9 +91,6 @@
         </Win32>
       </Options>
     </Linking>
-    <Other>
-      <CompilerPath Value="/home/christo/fpc/installs/lib/fpc/3.1.1/ppcx64"/>
-    </Other>
   </CompilerOptions>
   <Debugging>
     <Exceptions Count="3">
