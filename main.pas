@@ -46,6 +46,7 @@ type
   TMemoryMap = record
     flashbase, flashsize,
     srambase, sramsize,
+    externalRAMbase, externalRAMsize,
     eeprombase, eepromsize,
     bootbase, bootsize: integer;
   end;
@@ -181,12 +182,16 @@ begin
         begin
           Result.srambase := dev.AddressSpaces[i].memorySegments[j].start;
           Result.sramsize := dev.AddressSpaces[i].memorySegments[j].size;
-          Break;
         end
         else if CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'EEPROM') = 0 then
         begin
           Result.eeprombase := dev.AddressSpaces[i].memorySegments[j].start;
           Result.eepromsize := dev.AddressSpaces[i].memorySegments[j].size;
+        end
+        else if CompareText(dev.AddressSpaces[i].memorySegments[j].aname, 'EXTERNAL_SRAM') = 0 then
+        begin
+          Result.externalRAMbase := dev.AddressSpaces[i].memorySegments[j].start;
+          Result.externalRAMsize := dev.AddressSpaces[i].memorySegments[j].size;
         end;
       end;
     end
@@ -203,12 +208,26 @@ function generateCPUInfo(constref dev: TDevice; const memmap: TMemoryMap;
 var
   flagged: boolean = false;
 begin
-  // Check that subarch and memory size is aligned
-  if ((subarch = avr35) and (memmap.flashsize <= 8192)) or
-     ((subarch = avr5) and (memmap.flashsize <= 8192)) or
-     ((subarch = avr51) and (memmap.flashsize < 131072)) or
-     ((subarch = avr6) and (memmap.flashsize < 262144)) then
-    flagged := true;
+  // Fix subarch for known controllers
+  case UpperCase(dev.deviceName) of
+    'AT90USB82': subarch := avr25;          // 8 kB flash
+    'ATMEGA8U2': subarch := avr25;          // 8 kB flash
+    'ATXMEGA128A4U': subarch := avrxmega6;  // Does not support external RAM
+  end;
+
+  // Check that subarch and memory sizes are aligned
+  case subarch of
+    avr25, avr4: flagged := memmap.flashsize > 8192;
+    avr35, avr5: flagged := (memmap.flashsize <= 8192) or (memmap.flashsize > 65536);
+    avr51: flagged := memmap.flashsize <> 131072;
+    avr6 : flagged := memmap.flashsize <= 131072;
+    avrxmega2: flagged := (memmap.flashsize < 8192) or (memmap.flashsize > 65536);
+    avrxmega3: flagged := memmap.flashsize + memmap.sramsize > 65536;
+    avrxmega4: flagged := (memmap.flashsize < 65536) or (memmap.flashsize > 131072) or (memmap.sramsize > 65536);
+    avrxmega5: flagged := (memmap.flashsize < 65536) or (memmap.flashsize > 131072) or (memmap.sramsize + memmap.externalRAMsize <= 65536);
+    avrxmega6: flagged := (memmap.flashsize < 131072) or (memmap.sramsize > 65536);
+    avrxmega7: flagged := (memmap.flashsize < 131072) or (memmap.sramsize + memmap.externalRAMsize <= 65536);
+  end;
 
   if memmap.bootbase > 0 then
     Result := format(',(controllertypestr:''%s'';controllerunitstr:''%s'';cputype:%s;'+
