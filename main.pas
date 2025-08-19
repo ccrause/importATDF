@@ -51,6 +51,8 @@ type
     bootbase, bootsize: integer;
   end;
 
+  TSubarchCheck = (scOK, scSubarchModified, scSubarchInconsistent);
+
 { TForm1 }
 
 procedure TForm1.OpenMenuItemClick(Sender: TObject);
@@ -204,15 +206,19 @@ begin
 end;
 
 function generateCPUInfo(constref dev: TDevice; const memmap: TMemoryMap;
-  subarch: TSubarch): string;
+  var subarch: TSubarch): string;
 var
-  flagged: boolean = false;
+  subarchCheck: TSubarchCheck;
+  flagged: boolean;
 begin
+  subarchCheck := scSubarchModified;
   // Fix subarch for known controllers
   case UpperCase(dev.deviceName) of
     'AT90USB82': subarch := avr25;          // 8 kB flash
     'ATMEGA8U2': subarch := avr25;          // 8 kB flash
     'ATXMEGA128A4U': subarch := avrxmega6;  // Does not support external RAM
+    else
+      subarchCheck := scOK;
   end;
 
   // Check that subarch and memory sizes are aligned
@@ -227,7 +233,12 @@ begin
     avrxmega5: flagged := (memmap.flashsize < 65536) or (memmap.flashsize > 131072) or (memmap.sramsize + memmap.externalRAMsize <= 65536);
     avrxmega6: flagged := (memmap.flashsize < 131072) or (memmap.sramsize > 65536);
     avrxmega7: flagged := (memmap.flashsize < 131072) or (memmap.sramsize + memmap.externalRAMsize <= 65536);
+    else
+      flagged := false;
   end;
+
+  if flagged then
+    subarchCheck := scSubarchInconsistent;
 
   if memmap.bootbase > 0 then
     Result := format(',(controllertypestr:''%s'';controllerunitstr:''%s'';cputype:%s;'+
@@ -249,8 +260,10 @@ begin
              memmap.srambase, memmap.sramsize,
              memmap.eeprombase, memmap.eepromsize]);
 
-  if flagged then
-    Result := '>> ' + Result;
+  if subarchCheck = scSubarchModified then
+    Result := '// Subarch modified to better match memory map'#13#10 + Result;
+  if subarchCheck = scSubarchInconsistent then
+    Result := '// Subarch appears inconsistent with memory map'#13#10 + Result;
 end;
 
 procedure ParseFile(FileName: string; SL: TStrings);
