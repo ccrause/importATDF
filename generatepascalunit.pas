@@ -5,13 +5,13 @@ interface
 uses
   parsingATDF, classes;
 
-procedure generateUnitFromATDFInfo(constref device: TDevice; var SL: TStrings);
-procedure generateUnitXFromATDFInfo(constref device: TDevice; var SL: TStrings);
+procedure generateUnitFromATDFInfo(var device: TDevice; var SL: TStrings);
+procedure generateUnitXFromATDFInfo(var device: TDevice; var SL: TStrings);
 
 implementation
 
 uses
-  sysutils, math;
+  sysutils, math, types;
 
 const
   // 's' clashes with attiny40 PSR
@@ -38,7 +38,6 @@ type
     atype: string;
     offset: integer;
   end;
-  TSortedRegGroups = array of TRegGroup;
 
 var
   IDList: TStringList;  // list used to check uniqueness of identifier names
@@ -200,28 +199,20 @@ end;
 procedure processBitFieldOldStyle(constref bitField: TBitField; constref List: TStrings; const indentSpaces: byte; const maskOnly: boolean = false);
 var
   i, bitsInMask: integer;
-  idx, {bmp,} padding, s1, s2: string;
+  idx, padding, s1: string;
 begin
   idx := '';
-  //bmp := 'bm';
   SetLength(padding, indentSpaces);
   FillChar(padding[1], indentSpaces, ' ');
 
   // check if single bit value
   if bitField.mask in [1, 2, 4, 8, 16, 32, 64, 128] then
   begin
-    if not maskOnly then
-    begin
-      s1 := format('%s = $%.2x;',
-                  [bitField.aname + idx, round(log2(bitField.mask))]);
-    end;
-
-    if maskOnly then
-      List.Add(padding + s2)
-    else
-      List.Add(padding + s1 + '  ' + s2);
+    s1 := format('%s = $%.2x;',
+                [bitField.aname + idx, round(log2(bitField.mask))]);
+    List.Add(padding + s1);
   end
-  else if not maskOnly then// expand mask into several bit definitions
+  else // expand mask into several bit definitions
   begin
     bitsInMask := -1;     // identify lowest bit label
     for i := 0 to 7 do
@@ -302,17 +293,20 @@ begin
   end;
 end;
 
-procedure processValueGroup(constref ValueGroup: TValueGroup; const bitFieldOffset: integer; constref List: TStrings);
+procedure processValueGroup(constref ValueGroup: TValueGroup; const bitFieldOffset: integer;
+  constref List: TStrings; prefix: string = '');
 var
   i: integer;
   s: string;
 begin
- // Compose value name as [bitfield name]_[value name]
-  i := pos('_', ValueGroup.aname);
-  if i > 0 then
+  // Compose value name as [bitfield name]_[value name]
+  if prefix = '' then
+  begin
+    i := pos('_', ValueGroup.aname);
     s := copy(ValueGroup.aname, i+1, 255) + '_'
+  end
   else
-    s := '';
+    s := prefix;
 
   for i := 0 to high(ValueGroup.values) do
   begin
@@ -324,7 +318,9 @@ begin
   end;
 end;
 
-procedure processBitFieldAsMask(constref bitField: TBitField; constref valuegroups: TValueGroups; constref List: TStrings; const indentSpaces: byte; const maskOnly: boolean = false);
+procedure processBitFieldAsMask(constref bitField: TBitField; constref valuegroups: TValueGroups;
+  constref List: TStrings; const indentSpaces: byte; const maskOnly: boolean = false;
+  isAtxmega: boolean = false);
 var
   i, bitsInMask, mask, lsb: integer;
   idx, bmp, padding, s1, s2: string;
@@ -354,16 +350,28 @@ begin
       if valuegroups[i].values[high(valuegroups[i].values)].value > mask then
         List.Add('// **** Inconsistency between mask and values for ' +bitField.aname);
 
-      List.Add(padding + '// ' + bitField.values); // perhaps strip module prefix?
-      // Add generic bit mask for whole value group
-      // Some registers have multiple modes - this seems to be encoded in the values-group name
-      // as MODULE_MODE_BITFIELDNAME
-      // Strip MODULE_ then MODE_BITFIELDNAME ensures a unique name
-      // Also work for standard case which is labeled MODULE_BITFIELDNAME
-      //List.Add(padding + bitField.aname+'mask = $' + IntToHex(bitField.mask, 2) + ';');
       s1 := Copy(bitField.values, pos('_', bitField.values)+1, 255);
-      List.Add(padding + s1+'mask = $' + IntToHex(bitField.mask, 2) + ';');
-      processValueGroup(valuegroups[i], lsb, List);
+      if isAtxmega and (bitField.aname <> s1) then
+      begin
+        // valuegroups can be shared between bitfields, so use
+        // bitfield.name in place of values for unique name
+        List.Add(padding + '// ' + bitField.aname);
+        List.Add(padding + bitField.aname+'mask = $' + IntToHex(bitField.mask, 2) + ';');
+        processValueGroup(valuegroups[i], lsb, List, bitField.aname);
+      end
+      else
+      begin
+        List.Add(padding + '// ' + bitField.values); // perhaps strip module prefix?
+        // Add generic bit mask for whole value group
+        // Some registers have multiple modes - this seems to be encoded in the values-group name
+        // as MODULE_MODE_BITFIELDNAME
+        // Strip MODULE_ then MODE_BITFIELDNAME ensures a unique name
+        // Also work for standard case which is labeled MODULE_BITFIELDNAME
+        //List.Add(padding + bitField.aname+'mask = $' + IntToHex(bitField.mask, 2) + ';');
+        s1 := Copy(bitField.values, pos('_', bitField.values)+1, 255);
+        List.Add(padding + s1+'mask = $' + IntToHex(bitField.mask, 2) + ';');
+        processValueGroup(valuegroups[i], lsb, List);
+      end;
     end
     else
       List.Add('Unexpectedly no matching value-group for "' + bitField.values + '"');
@@ -422,10 +430,9 @@ end;
 //  PB0 = 0;
 procedure generateDeclarationsOpt0(constref device: TDevice; var List: TStrings);
 var
-  i, j, k, bitsInMask: integer;
+  i, j: integer;
   sortedRegs: TSortedRegs;
   r: TReg;
-  b: TBitField;
   comment: string;
   bitDefs: TStringList;
 begin
@@ -487,10 +494,9 @@ end;
 //  PB0 = 0;
 procedure generateDeclarationsOpt1(constref device: TDevice; var List: TStrings);
 var
-  i, j, k, bitsInMask: integer;
+  i, j: integer;
   sortedRegs: TSortedRegs;
   r: TReg;
-  b: TBitField;
   previousVar: boolean;
   comment: string;
 begin
@@ -547,7 +553,7 @@ end;
 //  PORTA: byte absolute $22;  // Port A Data Register
 procedure generateStandardDeclarationFromRegisterInfo(constref reg: TReg; var  typeStr, varStr, constStr: string);
 var
-  j, k, bitsInMask, bitIndex, bitmask, bitnumber: integer;
+  j, k, bitsInMask, bitmask, bitnumber: integer;
   b: TBitField;
   comment, s: string;
   typeList, varList, constList: TStringList;
@@ -802,17 +808,13 @@ begin
       k := bitlist.IndexOfName(IntToStr(j));
       if k > -1 then
       begin
-        //setdef := setdef + 'e';  // e prefix = set element prefix
-        //s := 'e';
         if skippedbit then
         begin
           skippedbit := false;
-          //setdef := setdef + bitlist.ValueFromIndex[k] + '=' +IntToStr(j) + ', '
           s := setPrefix + bitlist.ValueFromIndex[k];
           sID := '=' + IntToStr(j);
         end
         else
-          //setdef := setdef + bitlist.ValueFromIndex[k] + ', ';
           s := setPrefix + bitlist.ValueFromIndex[k];
 
         s := AddUniqueID(s);
@@ -938,10 +940,9 @@ begin
 end;
 
 // Combine register declarations with rest of unit information such as ISR declarations and including startup code
-procedure generateUnitFromATDFInfo(constref device: TDevice; var SL: TStrings);
+procedure generateUnitFromATDFInfo(var device: TDevice; var SL: TStrings);
 var
   jmpInstr: string;  // jmp/rjmp depending on target capability
-  startInc: string;  // start.inc/start_noram.inc depending on target RAM
   i: integer;
   pgmsize, sramsize: integer;
   cl, vl: TStringList;
@@ -964,14 +965,11 @@ begin
     end;
 
     if pgmsize > 8192 then jmpInstr := 'jmp' else jmpInstr := 'rjmp';
-    if sramsize > 0 then startInc := 'start' else startInc := 'start_noram';
-
     SL.Clear;
     SL.Add('unit ' + device.deviceName + ';');
     SL.Add(#13#10'interface'#13#10);
 
     generateDeclarationsOpt0(device, SL);
-    //generateDeclarationsOpt2(device, SL);
 
     if pgmsize > 8192 then
       SL.Add(#13#10'implementation'#13#10#13#10'{$i avrcommon.inc}'#13#10)
@@ -1021,7 +1019,7 @@ var
   i, j, k: integer;
   pms: TPeriphModules;
   rg: TPeriphRegGroup;
-  typ, ref: string;
+  ref: string;
   sortedList: TStringList;
 begin
   pms := device.PeriphModules;
@@ -1034,7 +1032,6 @@ begin
   sortedList := TStringList.Create;
   for i := 0 to high(pms) do
   begin
-    typ := pms[i].aname;
     for j := 0 to high(pms[i].periphInstances) do
     begin
       for k := 0 to high(pms[i].periphInstances[j].RegGroup) do
@@ -1044,7 +1041,7 @@ begin
         // declarations for data space
         if (device.architechture = 'AVR8X') or (rg.addressSpace = 'data') then
         begin
-          ref := format('  %s: T%s absolute $%.4X;',[rg.aname, typ, rg.offset]);
+          ref := format('  %s: T%s absolute $%.4X;',[rg.aname, rg.nameInModule, rg.offset]);
           sortedList.Add(IntToHex(rg.offset, 4) + '=' + ref);
         end;
       end;
@@ -1057,6 +1054,65 @@ begin
     SL.Add(sortedList.ValueFromIndex[i]);
 
   sortedList.Free;
+end;
+
+procedure generateInterruptVectors(var device: TDevice);
+var
+  i, j, k, l, iIndex, globalIndex: integer;
+  name_in_module, instanceName: string;
+begin
+  { <peripherals>
+      <module name="TC" id="I3007" version="XMEGAE">
+        <instance name="TCC4">
+          <register-group address-space="data" offset="0x800" name-in-module="TC4" name="TCC4"/>
+
+      <interrupt-group index="9" module-instance="PORTC" name-in-module="PORT"/>
+      <interrupt-group index="12" module-instance="TCC4" name-in-module="TC4"/>
+
+    <modules>
+      <module name="TC" id="I3007" version="XMEGAE" caption="16-bit Timer/Counter With PWM">
+        <register-group caption="16-bit Timer/Counter 4" name="TC4" size="64">
+        <interrupt-group name="TC4">
+          <interrupt index="0" name="OVF" caption="Overflow Interrupt"/>
+
+        <interrupt-group name="PORT">
+          <interrupt index="0" name="INT" caption="External Interrupt"/>
+
+    Strategy:
+    1. Find interrupt group in module
+    2. Lookup interrupt group name in global interrupt group (moduleName)
+    3. Iterate over module.interrupt-group.interrupt
+       a) Interrupt index = globalInterruptGroup.index + module.interruptGroup.index
+       b) Interrupt name = globalInterruptGroup.instanceName_module.interrupt
+  }
+
+  for i := 0 to high(device.Modules) do
+  begin
+    for j := 0 to high(device.Modules[i].interruptGroups) do
+    begin
+      name_in_module := device.Modules[i].interruptGroups[j].name;
+
+      // Find name-in-module in globalIG list
+      for l := 0 to high(device.GlobalInterruptGroups) do
+      begin
+        if (device.GlobalInterruptGroups[l].moduleName = name_in_module) then
+        begin
+          globalIndex := device.GlobalInterruptGroups[l].index;  // excludes reset vector
+          instanceName := device.GlobalInterruptGroups[l].instanceName;
+          for k := 0 to high(device.Modules[i].interruptGroups[j].interrupts) do
+          begin
+            iIndex := globalIndex + device.Modules[i].interruptGroups[j].interrupts[k].index;
+            if iIndex >= length(device.Interrupts) then
+              SetLength(device.Interrupts, iIndex+1);
+
+            device.Interrupts[iIndex].index := iIndex;
+            device.Interrupts[iIndex].name := instanceName + '_' + device.Modules[i].interruptGroups[j].interrupts[k].name;
+            device.Interrupts[iIndex].caption := device.Modules[i].interruptGroups[j].interrupts[k].caption;
+          end;
+        end;
+      end;
+    end;
+  end;
 end;
 
 // Escape reserved Pascal words to prevent compilation errors
@@ -1159,24 +1215,71 @@ begin
   end;
 end;
 
+function sortRegisterGroupIndexes(rgArray: TRegisterGroups): TIntegerDynArray;
+var
+  rgList, sortedRGList: TStringList;
+  i, j, tmp, tmp2: integer;
+  rg: TRegisterGroup;
+  r: TRegister;
+begin
+  // Create module name lookup list
+  rgList := TStringList.Create;
+  for i := 0 to High(rgArray) do
+    rgList.Add(rgArray[i].aname);
+
+  sortedRGList := TStringList.Create;
+  SetLength(Result, Length(rgArray));
+  FillDWord(Result[0], Length(rgArray), $FFFFFFFF);
+  tmp2 := 0;
+  for i := 0 to High(rgArray) do
+  begin
+    rg := rgArray[i];
+    for j := 0 to High(rg.registers) do
+    begin
+      r := rg.registers[j];
+      if (r.classname <> '') then
+      begin
+        tmp := sortedRGList.IndexOf(r.classname);
+        if tmp < 0 then
+        begin
+          tmp := rgList.IndexOf(r.classname);
+          sortedRGList.Add(r.classname);
+          Result[tmp2] := tmp;
+          inc(tmp2);
+        end;
+      end;
+    end;
+    tmp := sortedRGList.IndexOf(rg.aname);
+    if tmp < 0 then
+    begin
+      tmp := rgList.IndexOf(rg.aname);
+      sortedRGList.Add(rg.aname);
+      Result[tmp2] := tmp;
+      inc(tmp2);
+    end;
+  end;
+
+  rgList.Free;
+  sortedRGList.Free;
+end;
+
 // Generate record style decalarations for register groups
 // type
 // TRSTCTRL = record //Reset controller
 //   RSTFR: byte;  //Reset Flags
 //   SWRR: byte;  //Software Reset
 // end;
-procedure generateDeclarationsOptX(constref device: TDevice; var List: TStrings);
+procedure generateDeclarationsOptX(var device: TDevice; var List: TStrings);
 var
-  i, j, k, bitsInMask, tmp2, tmp, tmp3: integer;
-  sortedRegs: TSortedRegs;
+  i, j, k, tmp2, tmp, tmp3: integer;
+  registerGroup: TRegisterGroup;
   r: TRegister;
-  b: TBitField;
   previousType, foundBottomReg, isUniqueBitField: boolean;
-  s, comment, type_: string;
-  pm: TPeriphModule;
+  s, comment: string;
   m: TModule;
   reverseList, bitFieldList: TStringList;
   RegGroupArray: array of string;
+  sortedRegisterGroupIndexes: TIntegerDynArray;
 begin
   if not Assigned(device.Modules) then
     exit;
@@ -1188,13 +1291,15 @@ begin
 
   reverseList := TStringList.Create;
   bitFieldList := TStringList.Create;
+
   for i := 0 to High(device.Modules) do
   begin
     m := device.Modules[i];
     if not Assigned(m.registerGroups) then
       Continue;
-    type_ := ': T'+m.aname+';';
-    for j := 0 to High(m.registerGroups) do
+
+    sortedRegisterGroupIndexes := sortRegisterGroupIndexes(m.registerGroups);
+    for j := 0 to High(sortedRegisterGroupIndexes) do
     begin
       if not previousType then
       begin
@@ -1202,18 +1307,36 @@ begin
         previousType := true;
       end;
 
-      if m.registerGroups[j].class_ = '' then
+      registerGroup := m.registerGroups[sortedRegisterGroupIndexes[j]];
+      if registerGroup.class_ = '' then
       begin
         // Declare normal record as object so that const declarations can be encapsulated inside object
-        List.Add('  T' + m.registerGroups[j].aname + ' = object //'+m.registerGroups[j].caption);
-        SetLength(RegGroupArray, m.registerGroups[j].size);
+        List.Add('  T' + registerGroup.aname + ' = object //'+registerGroup.caption);
+        SetLength(RegGroupArray, registerGroup.size);
         for k := 0 to high(RegGroupArray) do
           RegGroupArray[k] := '';
 
         bitFieldList.Add('  const');
-        for k := 0 to high(m.registerGroups[j].registers) do
+        for k := 0 to high(registerGroup.registers) do
         begin
-          r := m.registerGroups[j].registers[k];
+          r := registerGroup.registers[k];
+
+          // First check if register refers to register group,
+          // then search for definition in this module
+          // then copy the size to this register slot
+          if (r.classname <> '') then
+          begin
+            tmp := 0;
+            while (tmp < length(m.registerGroups)) and
+              (m.registerGroups[tmp].aname <> r.classname) do
+              inc(tmp);
+
+            if tmp < length(m.registerGroups) then
+              r.size := m.registerGroups[tmp].size
+            else
+              Exception.Create('Cannot find register group that matches: '+r.classname);
+          end;
+
           // Check if entry exceeds stated size (e.g. USERROW module which states size=32 but entries run to 63)
           if (r.offset + r.size) > length(RegGroupArray) then
             SetLength(RegGroupArray, r.offset + r.size);
@@ -1239,7 +1362,14 @@ begin
               RegGroupArray[r.offset+3] := '_';
             end;
             else
-              List.Add('################ Error unexpected register byte size...');
+              if r.classname <> '' then
+              begin
+                RegGroupArray[r.offset] := '    '+s+': T'+r.classname+';'+comment;
+                for tmp := 1 to r.size-1 do
+                  RegGroupArray[r.offset+tmp] := '_';
+              end
+              else
+                Exception.Create('Cannot determine size of: '+s);
           end;
 
           if (length(r.bitFields) > 0) then
@@ -1266,7 +1396,7 @@ begin
                 end;
               end;
               if isUniqueBitField then
-                processBitFieldAsMask(r.bitFields[tmp], m.valueGroups, bitFieldList, 4, true);
+                processBitFieldAsMask(r.bitFields[tmp], m.valueGroups, bitFieldList, 4, true, device.architechture = 'AVR8_XMEGA');
             end;
           end;
         end;
@@ -1312,6 +1442,7 @@ begin
       List.Add('');
       bitFieldList.Clear;
     end;
+
   end;
 
   reverseList.Free;
@@ -1325,17 +1456,20 @@ begin
   List.Add('');
 
   sortedRegGroupsX(device, List);
+
+  // Unpack interrupt groups into interrupt vectors
+  if Length(device.GlobalInterruptGroups) > 0 then
+    generateInterruptVectors(device);
 end;
 
 // Combine register declarations with rest of unit information such as ISR declarations and including startup code
 // Similar to generateUnitFromATDFInfo, except for calling a different register declaration function
 // Could actually use a single function and just specify which declaration style to use...
-procedure generateUnitXFromATDFInfo(constref device: TDevice; var SL: TStrings);
+procedure generateUnitXFromATDFInfo(var device: TDevice; var SL: TStrings);
 var
   jmpInstr: string;  // jmp/rjmp depending on target capability
-  startInc: string;  // start.inc/start_noram.inc depending on target RAM
   i, prevID: integer;
-  pgmsize, sramsize: integer;
+  pgmsize: integer;
   cl, vl: TStringList;
 begin
   cl := TStringList.Create;
@@ -1343,27 +1477,19 @@ begin
   try
     // device capability checks required later on
     pgmsize := 0;
-    sramsize := 0;
     i := 0;
     while i < length(device.AddressSpaces) do
     begin
       if device.AddressSpaces[i].aname = 'prog' then
         pgmsize := device.AddressSpaces[i].size;
-      if device.AddressSpaces[i].aname = 'data' then
-        sramsize := device.AddressSpaces[i].size;
-
       inc(i);
     end;
 
     if pgmsize > 8192 then jmpInstr := 'jmp' else jmpInstr := 'rjmp';
-    if sramsize > 0 then startInc := 'start' else startInc := 'start_noram';
-
     SL.Clear;
     SL.Add('unit ' + device.deviceName + ';');
     SL.Add(#13#10'interface'#13#10);
 
-    //generateDeclarationsOpt1(device, SL);
-    //generateDeclarationsOpt2(device, SL);
     generateDeclarationsOptX(device, SL);
     if pgmsize > 8192 then
       SL.Add(#13#10'implementation'#13#10#13#10'{$i avrcommon.inc}'#13#10)
@@ -1373,16 +1499,19 @@ begin
     prevID := 0;
     for i := 0 to High(device.Interrupts) do
     begin
-      if device.Interrupts[i].index <> prevID then
-        SL.Add(format('procedure %s_ISR; external name ''%s_ISR''; // Interrupt %d %s',
+      if device.Interrupts[i].index > 0 then
+      begin
+        if device.Interrupts[i].index <> prevID then
+          SL.Add(format('procedure %s_ISR; external name ''%s_ISR''; // Interrupt %d %s',
+              [device.Interrupts[i].name, device.Interrupts[i].name,
+               device.Interrupts[i].index, device.Interrupts[i].caption]))
+        else
+        SL.Add(format('//procedure %s_ISR; external name ''%s_ISR''; // Interrupt %d %s',
             [device.Interrupts[i].name, device.Interrupts[i].name,
-             device.Interrupts[i].index, device.Interrupts[i].caption]))
-      else
-      SL.Add(format('//procedure %s_ISR; external name ''%s_ISR''; // Interrupt %d %s',
-          [device.Interrupts[i].name, device.Interrupts[i].name,
-           device.Interrupts[i].index, device.Interrupts[i].caption]));
+             device.Interrupts[i].index, device.Interrupts[i].caption]));
 
-      prevID := device.Interrupts[i].index;
+        prevID := device.Interrupts[i].index;
+      end;
     end;
 
     SL.Add(#13#10'procedure _FPC_start; assembler; nostackframe; noreturn; public name '+
@@ -1392,36 +1521,45 @@ begin
     prevID := 0;
     for i := 0 to High(device.Interrupts) do
     begin
-      if device.Interrupts[i].index <> prevID then
-        SL.Add('  '+jmpInstr+' ' + device.Interrupts[i].name + '_ISR')
-      else
-        SL.Add('//  '+jmpInstr+' ' + device.Interrupts[i].name + '_ISR');
+      if device.Interrupts[i].index > 0 then
+      begin
+        if device.Interrupts[i].index <> prevID then
+          SL.Add('  '+jmpInstr+' ' + device.Interrupts[i].name + '_ISR')
+        else
+          SL.Add('//  '+jmpInstr+' ' + device.Interrupts[i].name + '_ISR');
 
-      prevID := device.Interrupts[i].index;
+        prevID := device.Interrupts[i].index;
+      end;
     end;
 
     SL.Add('');
     prevID := 0;
     for i := 0 to High(device.Interrupts) do
     begin
-      if device.Interrupts[i].index <> prevID then
-        SL.Add('  .weak ' + device.Interrupts[i].name + '_ISR')
-      else
-        SL.Add('//  .weak ' + device.Interrupts[i].name + '_ISR');
+      if device.Interrupts[i].index > 0 then
+      begin
+        if device.Interrupts[i].index <> prevID then
+          SL.Add('  .weak ' + device.Interrupts[i].name + '_ISR')
+        else
+          SL.Add('//  .weak ' + device.Interrupts[i].name + '_ISR');
 
-      prevID := device.Interrupts[i].index;
+        prevID := device.Interrupts[i].index;
+      end;
     end;
 
     SL.Add('');
     prevID := 0;
     for i := 0 to High(device.Interrupts) do
     begin
-      if device.Interrupts[i].index <> prevID then
-        SL.Add('  .set ' + device.Interrupts[i].name + '_ISR' + ', Default_IRQ_handler')
-      else
-        SL.Add('//  .set ' + device.Interrupts[i].name + '_ISR' + ', Default_IRQ_handler');
+      if device.Interrupts[i].index > 0 then
+      begin
+        if device.Interrupts[i].index <> prevID then
+          SL.Add('  .set ' + device.Interrupts[i].name + '_ISR' + ', Default_IRQ_handler')
+        else
+          SL.Add('//  .set ' + device.Interrupts[i].name + '_ISR' + ', Default_IRQ_handler');
 
-      prevID := device.Interrupts[i].index;
+        prevID := device.Interrupts[i].index;
+      end;
     end;
 
     SL.Add('end;');

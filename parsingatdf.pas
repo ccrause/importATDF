@@ -81,6 +81,7 @@ type
     initVal,
     mask: integer;
     bitFields: TBitFields;
+    classname: string;  // Set if pointing to an embedded object field (atxmega)
   end;
   TRegisters = array of TRegister;
 
@@ -105,20 +106,34 @@ type
   end;
   TValueGroups = array of TValueGroup;
 
-  TModule = record
-    aname,
-    caption: string;
-    registerGroups: TRegisterGroups;
-    valueGroups: TValueGroups;
-  end;
-  TModules = array of TModule;
-
   TInterrupt = record
     name,
     caption: string;
     index: integer;
   end;
   TInterrupts = array of TInterrupt;
+
+  TInterruptGroup = record
+    name: string;
+    interrupts: TInterrupts
+  end;
+  TInterruptGroups = array of TInterruptGroup;
+
+  TModule = record
+    aname,
+    caption: string;
+    registerGroups: TRegisterGroups;
+    valueGroups: TValueGroups;
+    interruptGroups: TInterruptGroups;
+  end;
+  TModules = array of TModule;
+
+  TGlobalInterruptGroup = record
+    instanceName,   // module-instance attribute
+    moduleName: string;  // name-in-module attribute
+    index: integer;
+  end;
+  TGlobalInterruptGroups = array of TGlobalInterruptGroup;
 
   TProgrammerInterface = record
     name,
@@ -145,6 +160,7 @@ type
     PeriphModules: TPeriphModules;
     Modules: TModules;
     Interrupts: TInterrupts;
+    GlobalInterruptGroups: TGlobalInterruptGroups;
     Interfaces: TProgrammerInterfaces;
     PropertyGroups: TPropGroups;
   end;
@@ -216,7 +232,11 @@ begin
     Result[i].id := safeAttributeValue(ASNode.Attributes.GetNamedItem('id'));
     Result[i].aname := safeAttributeValue(ASNode.Attributes.GetNamedItem('name'));
     Val(safeAttributeValue(ASNode.Attributes.GetNamedItem('size')), Result[i].size, errCode);
+    if not(errCode = 0) then
+      Exception.Create('Error converting address space size to value');
     Val(safeAttributeValue(ASNode.Attributes.GetNamedItem('start')), Result[i].start, errCode);
+    if not(errCode = 0) then
+      Exception.Create('Error converting address space start to value');
 
     memSegNode := ASNode.FirstChild;
     while Assigned(memSegNode) do
@@ -346,8 +366,11 @@ end;
 
 function parseModules(DocNode: TDOMNode): TModules;
 var
-  ModulesNode, ModuleNode, rgNode, rNode, bfNode, vgNode, vNode: TDOMNode;
+  ModulesNode, ModuleNode, rgNode, rNode, bfNode, vgNode, vNode,
+  igNode, iNode: TDOMNode;
   i, j, k, l: integer;
+  s: string;
+  interruptGroup: ^TInterruptGroup;
 begin
   SetLength(Result, 0);
   ModulesNode := DocNode.FindNode('modules');
@@ -363,6 +386,7 @@ begin
 
     Result[i].aname := safeAttributeValue(ModuleNode.Attributes.GetNamedItem('name'));
     Result[i].caption := safeAttributeValue(ModuleNode.Attributes.GetNamedItem('caption'));
+    Result[i].interruptGroups := nil;
 
     rgNode := ModuleNode.FindNode('register-group');
     while Assigned(rgNode) and (rgNode.NodeName = 'register-group') do
@@ -436,12 +460,17 @@ begin
                 end;
               end;
             end
-            else if (rNode.NodeName = 'register-group') then
+            else if (rNode.NodeName = 'register-group') then   // TODO: check for nested types
             begin
               Result[i].registerGroups[j].registers[k].aname :=
-                safeAttributeValue(rNode.Attributes.GetNamedItem('name'));  // refer to original reg-group name
+                safeAttributeValue(rNode.Attributes.GetNamedItem('name'));
               Result[i].registerGroups[j].registers[k].caption :=
-                safeAttributeValue(rNode.Attributes.GetNamedItem('name-in-module'));  // refer to original reg-group name
+                safeAttributeValue(rNode.Attributes.GetNamedItem('caption'));
+              Result[i].registerGroups[j].registers[k].offset :=
+                safeAttributeInteger(rNode.Attributes.GetNamedItem('offset'));
+
+              Result[i].registerGroups[j].registers[k].classname :=
+                safeAttributeValue(rNode.Attributes.GetNamedItem('name-in-module'));
             end;
           end;
 
@@ -484,6 +513,34 @@ begin
       end;
 
       vgNode := vgNode.NextSibling;
+    end;
+
+    igNode := ModuleNode.FindNode('interrupt-group');
+    while Assigned(igNode) and (igNode.NodeName = 'interrupt-group') do
+    begin
+      if igNode.NodeType <> COMMENT_NODE then
+      begin
+        j := length(Result[i].interruptGroups);
+        SetLength(Result[i].interruptGroups, j+1);
+        interruptGroup := @Result[i].interruptGroups[j];
+        interruptGroup^.name := safeAttributeValue(igNode.Attributes.GetNamedItem('name'));
+
+        iNode := igNode.FindNode('interrupt');
+        while Assigned(iNode) and (iNode.NodeName = 'interrupt') do
+        begin
+          k := Length(interruptGroup^.interrupts);
+          SetLength(interruptGroup^.interrupts, k+1);
+
+          s := safeAttributeValue(iNode.Attributes.GetNamedItem('name'));
+          l := safeAttributeInteger(iNode.Attributes.GetNamedItem('index'));
+
+          interruptGroup^.interrupts[k].index := l;
+          interruptGroup^.interrupts[k].name := s;
+          interruptGroup^.interrupts[k].caption := safeAttributeValue(iNode.Attributes.GetNamedItem('caption'));;
+          iNode := iNode.NextSibling;
+        end;
+      end;
+      igNode := igNode.NextSibling;
     end;
 
     ModuleNode := ModuleNode.NextSibling;
@@ -537,6 +594,55 @@ begin
     else
       raise Exception.Create('Error converting text "'+s+'" to integer in <interrupt...> parsing.');
 
+    node := node.NextSibling;
+  end;
+end;
+
+function parseInterruptGroups(DocNode: TDOMNode): TGlobalInterruptGroups;
+var
+  node: TDOMNode;
+  i: integer;
+  s: string;
+  v, errcode: integer;
+begin
+  Result := nil;
+  node := DocNode.FindNode('devices');
+  if Assigned(node) then
+  begin
+    node := node.FindNode('device');
+  end
+  else
+    exit;
+
+  if Assigned(node) then
+  begin
+    node := node.FindNode('interrupts');
+  end
+  else
+    exit;
+
+  if not Assigned(node) then
+    exit;
+
+  node := node.FirstChild;
+  while Assigned(node) and (node.NodeName = 'interrupt-group') do
+  begin
+    //         <interrupt-group index="12" module-instance="TCC4" name-in-module="TC4"/>
+    //      <interrupt-group name="TC4">
+    //        <interrupt index="0" name="OVF" caption="Overflow Interrupt"/>
+    //    interrupt: TCC4_OVF
+    i := length(Result);
+    SetLength(Result, i+1);
+
+    s := safeAttributeValue(node.Attributes.GetNamedItem('index'));
+    Val(s, v, errcode);
+    if errcode = 0 then
+      Result[i].index := v
+    else
+      raise Exception.Create('Error converting text "'+s+'" to integer in <interrupt...> parsing.');
+
+    Result[i].instanceName := safeAttributeValue(node.Attributes.GetNamedItem('module-instance'));
+    Result[i].moduleName := safeAttributeValue(node.Attributes.GetNamedItem('name-in-module'));
     node := node.NextSibling;
   end;
 end;
@@ -642,9 +748,15 @@ begin
   Result.family := safeAttributeValue(node.Attributes.GetNamedItem('family'));
 
   Result.AddressSpaces := parseAddressSpaces(DocNode);
+
+  Result.Interrupts := parseInterrupts(DocNode);
+  if Length(Result.Interrupts) = 0 then
+    Result.GlobalInterruptGroups := parseInterruptGroups(DocNode)
+  else
+    Result.GlobalInterruptGroups := nil;
+
   Result.PeriphModules := parsePeripherals(DocNode);
   Result.Modules := parseModules(DocNode);
-  Result.Interrupts := parseInterrupts(DocNode);
   Result.PropertyGroups := parsePropertyGroups(DocNode);
   Result.Interfaces := parseInterfaces(DocNode);
 end;
