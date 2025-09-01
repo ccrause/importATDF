@@ -248,7 +248,6 @@ begin
       Result[i].memorySegments[j].type_ := safeAttributeValue(memSegNode.Attributes.GetNamedItem('type'));
       Result[i].memorySegments[j].executable := safeAttributeValue(memSegNode.Attributes.GetNamedItem('exec')) = '1';
 
-
       Val(safeAttributeValue(memSegNode.Attributes.GetNamedItem('start')), Result[i].memorySegments[j].start, errCode);
       Val(safeAttributeValue(memSegNode.Attributes.GetNamedItem('size')), Result[i].memorySegments[j].size, errCode);
       Val(safeAttributeValue(memSegNode.Attributes.GetNamedItem('pagesize')), Result[i].memorySegments[j].pagesize, errCode);

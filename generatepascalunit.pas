@@ -367,8 +367,6 @@ begin
         // as MODULE_MODE_BITFIELDNAME
         // Strip MODULE_ then MODE_BITFIELDNAME ensures a unique name
         // Also work for standard case which is labeled MODULE_BITFIELDNAME
-        //List.Add(padding + bitField.aname+'mask = $' + IntToHex(bitField.mask, 2) + ';');
-        s1 := Copy(bitField.values, pos('_', bitField.values)+1, 255);
         List.Add(padding + s1+'mask = $' + IntToHex(bitField.mask, 2) + ';');
         processValueGroup(valuegroups[i], lsb, List);
       end;
@@ -376,7 +374,7 @@ begin
     else
       List.Add('Unexpectedly no matching value-group for "' + bitField.values + '"');
   end
-  else
+  else if bitfield.mask < 255 then // expand mask into individual bit definitions, but only for less than 8 bits
   begin
    // Single bits may share a name with a register - not compatible with Pascal
    // Need to add something to ensure uniqueness
@@ -398,7 +396,7 @@ begin
       else
         List.Add(padding + s1 + '  ' + s2);
     end
-    else  // expand mask into several bit definitions
+    else
     begin
       bitsInMask := -1;     // identify lowest bit label
       for i := 0 to 7 do
@@ -1277,7 +1275,7 @@ var
   previousType, foundBottomReg, isUniqueBitField: boolean;
   s, comment: string;
   m: TModule;
-  reverseList, bitFieldList: TStringList;
+  reverseList, bitFieldList, registerGroupList: TStringList;
   RegGroupArray: array of string;
   sortedRegisterGroupIndexes: TIntegerDynArray;
 begin
@@ -1291,6 +1289,8 @@ begin
 
   reverseList := TStringList.Create;
   bitFieldList := TStringList.Create;
+  registerGroupList := TStringList.Create;
+  registerGroupList.Sorted := true;
 
   for i := 0 to High(device.Modules) do
   begin
@@ -1308,10 +1308,18 @@ begin
       end;
 
       registerGroup := m.registerGroups[sortedRegisterGroupIndexes[j]];
+
+      // If registerGroup name is not unique, skip declaration
+      // Fixes duplicate VPORT declaration in atxmega128D4.adtf
+      if registerGroupList.IndexOf(registerGroup.aname) < 0 then
+        registerGroupList.Add(registerGroup.aname)
+      else
+        continue;
+
       if registerGroup.class_ = '' then
       begin
         // Declare normal record as object so that const declarations can be encapsulated inside object
-        List.Add('  T' + registerGroup.aname + ' = object //'+registerGroup.caption);
+        List.Add('  T' + registerGroup.aname + ' = object // '+registerGroup.caption);
         SetLength(RegGroupArray, registerGroup.size);
         for k := 0 to high(RegGroupArray) do
           RegGroupArray[k] := '';
@@ -1344,7 +1352,7 @@ begin
           if r.caption = '' then
             comment := ''
           else
-            comment := '  //' + r.caption;
+            comment := '  // ' + r.caption;
 
           s := EscapeReservedWord(r.aname);
           case r.size of
@@ -1396,7 +1404,8 @@ begin
                 end;
               end;
               if isUniqueBitField then
-                processBitFieldAsMask(r.bitFields[tmp], m.valueGroups, bitFieldList, 4, true, device.architechture = 'AVR8_XMEGA');
+                processBitFieldAsMask(r.bitFields[tmp], m.valueGroups, bitFieldList, 4, true,
+                  (device.architechture = 'AVR8_XMEGA') or (device.architechture = 'AVR8X'));
             end;
           end;
         end;
@@ -1430,7 +1439,7 @@ begin
       else if m.registerGroups[j].class_ = 'union' then
       begin
         // Need to declare variant parts as record, so no const declarations included
-        List.Add('  T' + m.registerGroups[j].aname + ' = record //'+m.registerGroups[j].caption);
+        List.Add('  T' + m.registerGroups[j].aname + ' = record // '+m.registerGroups[j].caption);
         List.Add('    case byte of');
         for k := 0 to high(m.registerGroups[j].registers) do
           List.Add(format('      %d: (%s: T%s);', [k, m.registerGroups[j].registers[k].aname, m.registerGroups[j].registers[k].caption]));

@@ -86,7 +86,7 @@ var
 begin
   subarchCheck := scSubarchModified;
   // Fix subarch for known controllers
-  case deviceName of
+  case UpperCase(deviceName) of
     'AT90USB82': subarch := avr25;          // 8 kB flash
     'ATMEGA8U2': subarch := avr25;          // 8 kB flash
     'ATXMEGA128A4U': subarch := avrxmega6;  // Does not support external RAM
@@ -385,6 +385,7 @@ begin
       for j := 0 to High(dev.AddressSpaces[i].memorySegments) do
       begin
         if (dev.AddressSpaces[i].memorySegments[j].aname = 'IRAM') or
+           (dev.AddressSpaces[i].memorySegments[j].aname = 'SRAM') or
            (dev.AddressSpaces[i].memorySegments[j].aname = 'INTERNAL_SRAM') then
         begin
           Result.srambase := dev.AddressSpaces[i].memorySegments[j].start;
